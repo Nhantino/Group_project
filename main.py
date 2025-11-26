@@ -1,313 +1,411 @@
 import streamlit as st
 from PIL import Image
-import pytesseract
-import io
+import easyocr
+import requests
+import urllib.parse
+import yake
+from nltk.corpus import stopwords
+import nltk
+from googlesearch import search
 import time
 import os
-import requests
-from bs4 import BeautifulSoup
-import urllib.parse
+import tempfile
 
-# Cấu hình Tesseract cho Windows (uncomment và sửa đường dẫn nếu cần)
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# Initialize EasyOCR
+@st.cache_resource
+def get_ocr():
+    return easyocr.Reader(['vi', 'en'], gpu=False)
 
-# Cấu hình trang
+# Initialize YAKE extractor
+@st.cache_resource
+def get_yake_extractor():
+    return yake.KeywordExtractor(top_n=5, stopwords=None)
+
+# Download stopwords
+try:
+    stopwords.words('english')
+except:
+    nltk.download('stopwords', quiet=True)
+
+# Page configuration
 st.set_page_config(
-    page_title="AI Image Text Search",
+    page_title="OCR & Search Assistant",
     page_icon="🔍",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# CSS để tạo giao diện giống Claude/ChatGPT
+# Custom CSS - ChatGPT Style
 st.markdown("""
 <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    
-    .main {
-        background-color: #f7f7f8;
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
     }
     
-    .stChatMessage {
-        background-color: white;
-        border-radius: 12px;
-        padding: 16px;
-        margin: 8px 0;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    [data-testid="stAppViewContainer"] {
+        background: #42a5f5;
     }
     
-    .stChatInputContainer {
-        border-top: 1px solid #e5e5e5;
-        background-color: white;
-        padding: 16px 0;
+    [data-testid="stMain"] {
+        background: #42a5f5;
     }
     
     h1 {
-        font-size: 1.5rem;
-        font-weight: 600;
-        color: #2d2d2d;
+        color: #000;
+        font-size: 2.5rem;
+        font-weight: 800;
         text-align: center;
-        padding: 20px 0;
-        margin: 0;
+        margin-bottom: 10px;
     }
     
-    .extracted-text {
-        background-color: #f0f4f8;
-        border-left: 4px solid #4a90e2;
-        padding: 12px;
-        border-radius: 8px;
-        margin: 12px 0;
-        font-family: 'Courier New', monospace;
-        font-size: 0.9rem;
+    .subtitle {
+        text-align: center;
+        color: #333;
+        font-size: 1rem;
+        margin-bottom: 30px;
     }
     
-    .search-result-item {
-        background-color: white;
-        border: 1px solid #e0e0e0;
+    /* Chat Message Styling */
+    .chat-message {
+        padding: 16px;
+        border-radius: 12px;
+        margin-bottom: 12px;
+        display: flex;
+        gap: 12px;
+        animation: slideIn 0.3s ease-in;
+    }
+    
+    @keyframes slideIn {
+        from {
+            opacity: 0;
+            transform: translateY(10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    .user-message {
+        background: #0d47a1;
+        color: white;
+        justify-content: flex-end;
+        border-radius: 18px;
+        padding: 12px 16px;
+    }
+    
+    .assistant-message {
+        background: #f3f3f3;
+        color: #000;
+        border-left: 4px solid #0d47a1;
+        border-radius: 12px;
+        padding: 16px;
+    }
+    
+    .extracted-text-box {
+        background: #f9f9f9;
+        border: 1px solid #ddd;
         border-radius: 8px;
         padding: 16px;
         margin: 12px 0;
-        transition: box-shadow 0.3s;
+        font-family: 'Courier New', monospace;
+        font-size: 0.95rem;
+        line-height: 1.6;
+        max-height: 300px;
+        overflow-y: auto;
+        color: #000;
     }
     
-    .search-result-item:hover {
-        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    .search-results-container {
+        margin-top: 16px;
+        padding: 12px;
+        background: #f3f3f3;
+        border-radius: 8px;
     }
     
-    .result-title {
-        color: #1a73e8;
-        font-size: 1.1rem;
+    .search-item {
+        background: white;
+        border-left: 4px solid #0d47a1;
+        border-radius: 8px;
+        padding: 12px;
+        margin: 8px 0;
+        transition: all 0.2s ease;
+    }
+    
+    .search-item:hover {
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .search-item-title {
         font-weight: 600;
+        color: #0d47a1;
         margin-bottom: 4px;
     }
     
-    .result-url {
-        color: #5f6368;
+    .search-item-url {
+        color: #0d47a1;
+        text-decoration: none;
+        font-size: 0.9rem;
+    }
+    
+    .search-item-url:hover {
+        text-decoration: underline;
+    }
+    
+    .search-item-snippet {
+        color: #666;
         font-size: 0.85rem;
+        margin-top: 4px;
+    }
+    
+    .keyword-badge {
+        display: inline-block;
+        background: #0d47a1;
+        color: white;
+        padding: 4px 12px;
+        border-radius: 16px;
+        font-size: 0.85rem;
+        margin-right: 8px;
         margin-bottom: 8px;
     }
     
-    .result-snippet {
-        color: #3c4043;
-        font-size: 0.95rem;
-        line-height: 1.6;
+    .stButton > button {
+        background-color: #0d47a1 !important;
+        color: white !important;
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+        padding: 10px 24px !important;
+    }
+    
+    .stButton > button:hover {
+        background-color: #0a3d91 !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
-def search_duckduckgo(query, num_results=5):
-    """Tìm kiếm trên DuckDuckGo (không cần API key)"""
-    try:
-        search_url = "https://html.duckduckgo.com/html/"
-        params = {
-            'q': query,
-            'kl': 'vn-vn'  # Region Vietnam
-        }
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        response = requests.post(search_url, data=params, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        results = []
-        result_divs = soup.find_all('div', class_='result', limit=num_results)
-        
-        for div in result_divs:
-            title_tag = div.find('a', class_='result__a')
-            snippet_tag = div.find('a', class_='result__snippet')
-            
-            if title_tag:
-                title = title_tag.get_text(strip=True)
-                url = title_tag.get('href', '')
-                snippet = snippet_tag.get_text(strip=True) if snippet_tag else "Không có mô tả"
-                
-                results.append({
-                    'title': title,
-                    'url': url,
-                    'snippet': snippet
-                })
-        
-        return results
-    except Exception as e:
-        st.error(f"Lỗi khi tìm kiếm: {str(e)}")
-        return []
-
-def search_google_custom(query, num_results=5):
-    """Tìm kiếm trên Google bằng cách scrape (backup method)"""
-    try:
-        search_url = f"https://www.google.com/search?q={urllib.parse.quote(query)}&hl=vi&num={num_results}"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        response = requests.get(search_url, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        results = []
-        search_results = soup.find_all('div', class_='g', limit=num_results)
-        
-        for result in search_results:
-            title_tag = result.find('h3')
-            link_tag = result.find('a')
-            snippet_tag = result.find('div', class_=['VwiC3b', 'yXK7lf'])
-            
-            if title_tag and link_tag:
-                title = title_tag.get_text(strip=True)
-                url = link_tag.get('href', '')
-                snippet = snippet_tag.get_text(strip=True) if snippet_tag else "Không có mô tả"
-                
-                if url.startswith('http'):
-                    results.append({
-                        'title': title,
-                        'url': url,
-                        'snippet': snippet
-                    })
-        
-        return results
-    except Exception as e:
-        return []
-
-# Khởi tạo session state
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
 # Header
-st.title("🔍 AI Image Text Search")
+st.markdown("<h1>05_EASYOCR_KEYBERT</h1>", unsafe_allow_html=True)
+st.markdown("<p class='subtitle'>Upload ảnh → Scan text → Trích từ khóa → Search Google</p>", unsafe_allow_html=True)
 
-# Hiển thị lịch sử chat
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        if message["type"] == "image":
-            st.image(message["content"], width=300)
-        elif message["type"] == "text":
-            st.markdown(message["content"])
-        elif message["type"] == "extracted":
-            st.markdown(f'<div class="extracted-text"><strong>📝 Text trích xuất:</strong><br>{message["content"]}</div>', unsafe_allow_html=True)
-        elif message["type"] == "search_results":
-            st.markdown("### 🔎 Kết quả tìm kiếm:")
-            for idx, result in enumerate(message["content"], 1):
-                st.markdown(f"""
-                <div class="search-result-item">
-                    <div class="result-title">{idx}. {result['title']}</div>
-                    <div class="result-url">🔗 {result['url']}</div>
-                    <div class="result-snippet">{result['snippet']}</div>
-                </div>
-                """, unsafe_allow_html=True)
+# Initialize session state
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
-# Input area với file uploader
-uploaded_file = st.file_uploader(
-    "📷 Tải lên hình ảnh để trích xuất text và tìm kiếm",
-    type=["png", "jpg", "jpeg", "bmp", "tiff"],
-    help="Hỗ trợ các định dạng: PNG, JPG, JPEG, BMP, TIFF"
-)
+if "extracted_text" not in st.session_state:
+    st.session_state.extracted_text = ""
 
-if uploaded_file is not None:
-    # Hiển thị hình ảnh người dùng upload
-    st.session_state.messages.append({
-        "role": "user",
-        "type": "image",
-        "content": uploaded_file
-    })
+if "keywords" not in st.session_state:
+    st.session_state.keywords = []
+
+if "search_results" not in st.session_state:
+    st.session_state.search_results = []
+
+
+def extract_keywords(text, num_keywords=5):
+    """Extract keywords from text using YAKE"""
+    try:
+        kw_extractor = get_yake_extractor()
+        keywords = kw_extractor.extract_keywords(text)
+        # keywords is list of tuples (keyword, score), sorted by score
+        keyword_list = [kw[0] for kw in keywords[:num_keywords]]
+        return keyword_list if keyword_list else ["document"]
+    except:
+        # Fallback: use simple stopwords method
+        try:
+            stop_words = set(stopwords.words('english'))
+            words = text.lower().split()
+            keywords = [w for w in words if len(w) > 3 and w not in stop_words and w.isalpha()]
+            if not keywords:
+                keywords = [w for w in words if len(w) > 2]
+            keywords = list(dict.fromkeys(keywords))[:num_keywords]
+            return keywords if keywords else ["document"]
+        except:
+            words = text.split()
+            keywords = [w for w in words[:num_keywords] if len(w) > 2]
+            return keywords if keywords else ["document"]
+
+
+def search_google(query, num_results=5):
+    """Search Google and return results"""
+    results = []
     
-    with st.chat_message("user"):
-        st.image(uploaded_file, width=300)
-    
-    # Xử lý OCR và tìm kiếm
-    with st.chat_message("assistant"):
-        with st.spinner("🔄 Đang phân tích hình ảnh..."):
-            try:
-                # Đọc và xử lý hình ảnh
-                image = Image.open(uploaded_file)
-                
-                # Thực hiện OCR
-                extracted_text = pytesseract.image_to_string(image, lang='vie+eng')
-                
-                if extracted_text.strip():
-                    # Hiển thị text trích xuất được
-                    st.markdown(f'<div class="extracted-text"><strong>📝 Text trích xuất:</strong><br>{extracted_text}</div>', unsafe_allow_html=True)
-                    
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "type": "extracted",
-                        "content": extracted_text
+    try:
+        google_results = list(search(query, num_results=num_results, stop=num_results, pause=1))
+        for idx, url in enumerate(google_results, 1):
+            if url and url.startswith('http'):
+                try:
+                    domain = url.split('/')[2] if '/' in url else url
+                    results.append({
+                        'title': domain,
+                        'url': url,
+                        'snippet': 'Search result'
                     })
-                    
-                    # Tìm kiếm trên web
-                    with st.spinner("🌐 Đang tìm kiếm trên web..."):
-                        # Lấy 100 ký tự đầu để tìm kiếm
-                        search_query = extracted_text.strip()[:200]
-                        
-                        # Thử tìm kiếm DuckDuckGo trước
-                        search_results = search_duckduckgo(search_query, num_results=5)
-                        
-                        # Nếu không có kết quả, thử Google
-                        if not search_results:
-                            search_results = search_google_custom(search_query, num_results=5)
-                        
-                        if search_results:
-                            st.markdown("### 🔎 Kết quả tìm kiếm:")
-                            for idx, result in enumerate(search_results, 1):
-                                st.markdown(f"""
-                                <div class="search-result-item">
-                                    <div class="result-title">{idx}. {result['title']}</div>
-                                    <div class="result-url">🔗 <a href="{result['url']}" target="_blank">{result['url']}</a></div>
-                                    <div class="result-snippet">{result['snippet']}</div>
-                                </div>
-                                """, unsafe_allow_html=True)
-                            
-                            st.session_state.messages.append({
-                                "role": "assistant",
-                                "type": "search_results",
-                                "content": search_results
-                            })
-                        else:
-                            st.warning("⚠️ Không tìm thấy kết quả tìm kiếm. Vui lòng thử lại sau.")
-                else:
-                    st.warning("⚠️ Không tìm thấy text trong hình ảnh. Vui lòng thử hình ảnh khác có chứa text rõ ràng hơn.")
-                    
-            except Exception as e:
-                st.error(f"❌ Lỗi khi xử lý: {str(e)}")
-                st.info("💡 Đảm bảo bạn đã cài đặt Tesseract OCR và các thư viện cần thiết.")
+                except:
+                    pass
+    except Exception as e:
+        pass
+    
+    # Fallback
+    if len(results) == 0:
+        results.append({
+            'title': 'Google Search',
+            'url': f'https://www.google.com/search?q={urllib.parse.quote(query)}',
+            'snippet': 'Click to search on Google'
+        })
+    
+    return results[:num_results]
 
-# Sidebar với hướng dẫn
-with st.sidebar:
-    st.markdown("### 📖 Hướng dẫn sử dụng")
-    st.markdown("""
-    1. **Tải lên hình ảnh** có chứa text
-    2. Hệ thống sẽ **trích xuất text** bằng OCR
-    3. **Tự động tìm kiếm** text đó trên web
-    4. Hiển thị **kết quả tìm kiếm** từ DuckDuckGo/Google
+
+# Main Layout
+col1, col2 = st.columns([1, 1], gap="large")
+
+# Left column - Upload and Process
+with col1:
+    st.markdown("### 📸 Upload Image")
+    uploaded_file = st.file_uploader(
+        "Choose an image with text",
+        type=['jpg', 'jpeg', 'png', 'bmp', 'tiff'],
+        label_visibility="collapsed"
+    )
     
-    ---
+    if uploaded_file:
+        image = Image.open(uploaded_file)
+        st.image(image, use_container_width=True, caption="Uploaded Image")
+        
+        # OCR Button
+        if st.button("🔎 Scan Text", use_container_width=True, key="scan_btn"):
+            with st.spinner('Scanning text...'):
+                try:
+                    # Save uploaded file to temporary location
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
+                        tmp_file.write(uploaded_file.getbuffer())
+                        tmp_path = tmp_file.name
+                    
+                    try:
+                        reader = get_ocr()
+                        results = reader.readtext(tmp_path)
+                        
+                        extracted_text = ""
+                        if results:
+                            for detection in results:
+                                # Each detection is (bbox, text, confidence)
+                                text = detection[1]
+                                extracted_text += text + " "
+                        
+                        extracted_text = extracted_text.strip()
+                        
+                        if extracted_text:
+                            st.session_state.extracted_text = extracted_text
+                            st.session_state.chat_history.append({
+                                "role": "user",
+                                "content": f"Uploaded image: {uploaded_file.name}"
+                            })
+                            st.success("✅ Text scanned successfully!")
+                        else:
+                            st.error("❌ No text found in image")
+                    finally:
+                        # Clean up temporary file
+                        if os.path.exists(tmp_path):
+                            os.remove(tmp_path)
+                except Exception as e:
+                    st.error(f"Error scanning: {str(e)}")
+
+# Right column - Chat and Results
+with col2:
+    st.markdown("### 💬 Conversation")
     
-    ### ⚙️ Cài đặt thêm
+    # Chat History
+    chat_container = st.container()
+    with chat_container:
+        for message in st.session_state.chat_history:
+            if message["role"] == "user":
+                st.markdown(
+                    f'<div class="chat-message user-message">{message["content"]}</div>',
+                    unsafe_allow_html=True
+                )
+            else:
+                st.markdown(
+                    f'<div class="chat-message assistant-message">{message["content"]}</div>',
+                    unsafe_allow_html=True
+                )
     
-    ```bash
-    pip install beautifulsoup4 requests
-    ```
+    st.divider()
     
-    ### 🔧 Tesseract OCR
-    - Tải: [GitHub](https://github.com/UB-Mannheim/tesseract/wiki)
-    - Nhớ chọn ngôn ngữ Vietnamese khi cài
-    
-    ---
-    
-    ### 🌐 Nguồn tìm kiếm
-    - ✅ DuckDuckGo (primary)
-    - ✅ Google (backup)
-    - ✅ Kết quả thời gian thực
-    """)
-    
-    if st.button("🗑️ Xóa lịch sử chat"):
-        st.session_state.messages = []
-        st.rerun()
+    # Display Extracted Text
+    if st.session_state.extracted_text:
+        with st.expander("📄 Extracted Text", expanded=True):
+            st.markdown(
+                f'<div class="extracted-text-box">{st.session_state.extracted_text[:500]}{"..." if len(st.session_state.extracted_text) > 500 else ""}</div>',
+                unsafe_allow_html=True
+            )
+        
+        # Extract Keywords Button
+        col_key1, col_key2 = st.columns(2)
+        with col_key1:
+            if st.button("🏷️ Extract Keywords", use_container_width=True):
+                with st.spinner('Extracting keywords...'):
+                    keywords = extract_keywords(st.session_state.extracted_text, num_keywords=5)
+                    st.session_state.keywords = keywords
+                    
+                    st.session_state.chat_history.append({
+                        "role": "assistant",
+                        "content": f"Keywords: {', '.join(keywords)}"
+                    })
+                    st.rerun()
+        
+        # Search Button
+        with col_key2:
+            if st.button("🔗 Search Results", use_container_width=True):
+                if st.session_state.keywords:
+                    with st.spinner('Searching...'):
+                        query = ' '.join(st.session_state.keywords)
+                        results = search_google(query, num_results=5)
+                        st.session_state.search_results = results
+                        
+                        st.session_state.chat_history.append({
+                            "role": "assistant",
+                            "content": f"Found {len(results)} results for: {query}"
+                        })
+                        st.rerun()
+                else:
+                    st.warning("Please extract keywords first!")
+        
+        # Display Keywords
+        if st.session_state.keywords:
+            st.markdown("**Keywords:**")
+            keywords_html = "".join([f'<span class="keyword-badge">{kw}</span>' for kw in st.session_state.keywords])
+            st.markdown(f'<div>{keywords_html}</div>', unsafe_allow_html=True)
+        
+        # Display Search Results
+        if st.session_state.search_results:
+            st.markdown("**Search Results:**")
+            results_html = '<div class="search-results-container">'
+            
+            for idx, result in enumerate(st.session_state.search_results, 1):
+                results_html += f'''
+                <div class="search-item">
+                    <div class="search-item-title">{idx}. {result['title']}</div>
+                    <a href="{result['url']}" target="_blank" class="search-item-url">🔗 {result['url'][:60]}...</a>
+                    <div class="search-item-snippet">{result['snippet']}</div>
+                </div>
+                '''
+            
+            results_html += '</div>'
+            st.markdown(results_html, unsafe_allow_html=True)
+        
+        # Clear Button
+        if st.button("🗑️ Clear", use_container_width=True):
+            st.session_state.chat_history = []
+            st.session_state.extracted_text = ""
+            st.session_state.keywords = []
+            st.session_state.search_results = []
+            st.rerun()
 
 # Footer
-st.markdown("---")
+st.divider()
 st.markdown(
-    "<p style='text-align: center; color: #666; font-size: 0.9rem;'>Made with ❤️ using Streamlit | Real-time Image Search</p>",
+    "<p style='text-align: center; color: #fff; font-size: 0.85rem;'>Built with Streamlit | OCR: EasyOCR | Search: Google</p>",
     unsafe_allow_html=True
 )
