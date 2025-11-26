@@ -6,10 +6,13 @@ import urllib.parse
 import yake
 from nltk.corpus import stopwords
 import nltk
-from googlesearch import search
+from serpapi import GoogleSearch
 import time
 import os
 import tempfile
+
+# SerpAPI credentials
+SERPAPI_API_KEY = "8a7f63187c4434a378accb86f4dd104be846755eef9bf0a5a0802020721bc8b7"
 
 # Initialize EasyOCR
 @st.cache_resource
@@ -228,27 +231,43 @@ def extract_keywords(text, num_keywords=5):
 
 
 def search_google(query, num_results=5):
-    """Search Google and return results"""
+    """Search Google using SerpAPI"""
     results = []
     
     try:
-        google_results = list(search(query, num_results=num_results, stop=num_results, pause=1))
-        for idx, url in enumerate(google_results, 1):
-            if url and url.startswith('http'):
-                try:
-                    domain = url.split('/')[2] if '/' in url else url
-                    results.append({
-                        'title': domain,
-                        'url': url,
-                        'snippet': 'Search result'
-                    })
-                except:
-                    pass
+        # Setup SerpAPI parameters
+        params = {
+            "q": query,
+            "api_key": SERPAPI_API_KEY,
+            "num": num_results,
+            "engine": "google"
+        }
+        
+        # Execute the search
+        search = GoogleSearch(params)
+        result = search.get_dict()
+        
+        print(f"SerpAPI Response: {result}")  # Debug
+        
+        # Extract organic results
+        if "organic_results" in result:
+            for item in result["organic_results"][:num_results]:
+                results.append({
+                    'title': item.get('title', 'No title'),
+                    'url': item.get('link', ''),
+                    'snippet': item.get('snippet', 'No snippet')
+                })
+            print(f"Found {len(results)} results")
+        else:
+            print("No 'organic_results' in SerpAPI response")
+            if "error" in result:
+                print(f"Error: {result['error']}")
+        
     except Exception as e:
-        pass
-    
-    # Fallback
-    if len(results) == 0:
+        print(f"Error searching: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # Fallback: provide Google Search link
         results.append({
             'title': 'Google Search',
             'url': f'https://www.google.com/search?q={urllib.parse.quote(query)}',
@@ -384,13 +403,16 @@ with col2:
             results_html = '<div class="search-results-container">'
             
             for idx, result in enumerate(st.session_state.search_results, 1):
-                results_html += f'''
-                <div class="search-item">
-                    <div class="search-item-title">{idx}. {result['title']}</div>
-                    <a href="{result['url']}" target="_blank" class="search-item-url">🔗 {result['url'][:60]}...</a>
-                    <div class="search-item-snippet">{result['snippet']}</div>
-                </div>
-                '''
+                # Escape HTML special characters in title and snippet
+                title = result['title'].replace('<', '&lt;').replace('>', '&gt;')
+                snippet = result['snippet'].replace('<', '&lt;').replace('>', '&gt;')
+                url = result['url']
+                
+                results_html += f'''<div class="search-item">
+                    <div class="search-item-title">{idx}. {title}</div>
+                    <a href="{url}" target="_blank" class="search-item-url">🔗 {url[:60]}...</a>
+                    <div class="search-item-snippet">{snippet}</div>
+                </div>'''
             
             results_html += '</div>'
             st.markdown(results_html, unsafe_allow_html=True)
