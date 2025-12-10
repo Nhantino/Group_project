@@ -12,7 +12,12 @@ import text_analysis
 import web_search
 
 # SerpAPI credentials
-SERPAPI_API_KEY = "8a7f63187c4434a378accb86f4dd104be846755eef9bf0a5a0802020721bc8b7"
+try:
+    SERPAPI_API_KEY = st.secrets["SERPAPI_API_KEY"]
+except (FileNotFoundError, KeyError):
+    # Fallback for local development without secrets.toml
+    # It is recommended to create .streamlit/secrets.toml locally
+    SERPAPI_API_KEY = "8a7f63187c4434a378accb86f4dd104be846755eef9bf0a5a0802020721bc8b7"
 
 # Page configuration
 st.set_page_config(
