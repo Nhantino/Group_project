@@ -120,51 +120,7 @@ with col2:
                 unsafe_allow_html=True
             )
         
-        # OCR Accuracy Check Section
-        st.markdown("### 🎯 Check OCR Accuracy")
-        
-        st.markdown("**👁️ Nhập Original Text (nhìn vào ảnh gõ tay):**")
-        original_text = st.text_area(
-            "Original Text:",
-            height=120,
-            placeholder="Nhìn vào ảnh và gõ/copy text chính xác từ ảnh...",
-            label_visibility="collapsed",
-            key="original_text_input"
-        )
-        
-        if original_text and st.session_state.extracted_text:
-            if st.button("📊 Tính Độ Chính Xác", use_container_width=True):
-                wer, accuracy = text_analysis.calculate_wer(original_text, st.session_state.extracted_text)
-                
-                # Display result
-                accuracy_text = f"Độ chính xác: {accuracy:.2f}%"
-                
-                # Color coding based on accuracy
-                if accuracy >= 90:
-                    color = "🟢"
-                    status = "Xuất sắc"
-                elif accuracy >= 70:
-                    color = "🟡"
-                    status = "Tốt"
-                elif accuracy >= 50:
-                    color = "🟠"
-                    status = "Trung bình"
-                else:
-                    color = "🔴"
-                    status = "Cần cải thiện"
-                
-                st.markdown(f"""
-                <div style="background: #f0f2f6; padding: 20px; border-radius: 10px; text-align: center;">
-                    <h2 style="color: #000; margin: 0;">{color} {accuracy_text}</h2>
-                    <p style="color: #666; margin: 10px 0; font-size: 1rem;">Status: <strong>{status}</strong></p>
-                    <p style="color: #666; margin-top: 10px; font-size: 0.9rem;">WER: {wer:.4f}</p>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                st.session_state.chat_history.append({
-                    "role": "assistant",
-                    "content": accuracy_text
-                })
+
         
         st.divider()
         
@@ -173,8 +129,7 @@ with col2:
         with col_key1:
             if st.button("🏷️ Extract Keywords", use_container_width=True):
                 with st.spinner('Extracting keywords...'):
-                    # Use original_text if provided, otherwise use extracted_text
-                    text_to_extract = original_text if original_text and original_text.strip() else st.session_state.extracted_text
+                    text_to_extract = st.session_state.extracted_text
                     keywords = text_analysis.extract_keywords(text_to_extract)
                     st.session_state.keywords = keywords
                     
