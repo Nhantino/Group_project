@@ -1,7 +1,0 @@
-streamlit
-easyocr
-yake
-nltk
-google-search-results
-Pillow
-opencv-python-headless
